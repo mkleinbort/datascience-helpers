@@ -336,30 +336,52 @@ class Experiment:
 class ShapExplainer(Experiment):
     '''The ShapExplainer class must derive from Experiment to make use of validate init and 
     the .build() method'''
+    
+    shap_values = None
+    shap_expected_values = None
    
-    def set_shap_values(self):
-        '''NOTE: This only works if self.model is an instance of CatBoostRegressor
-        or CatBoostClassifier. It is possible to extend this to other models, but 
-        only Catboost is currently supported.'''
+    def set_shap_values(self, class_label=None):
+        '''Creates two internal tables: shap_values and shap_expected_values.
+        
+        Parameters:
+        -----------
+        class_label: str (default None)
+            Useful for multi-class classifiers. When this is provided, the shap values
+            will correspond the the predicted probability of this class.
 
+            If None then the first class in model.classes_ is used. That said, this is only 
+            relevant to multi-class classifiers. It has no effect on regression or binary classifiers.
+
+        Notes:
+        -----
+        This is not currently implemented for multi-class classification. 
+        The native output of get_feature importance is a table of {i records} x {j classes} x {k features}.
+
+        This only works if self.model is an instance of CatBoostRegressor
+        or CatBoostClassifier. It is possible to extend this to other models, but 
+        only the CatBoost models are currently supported.'''
+
+        # Pool is from the catboost library
         data_pool=Pool(self.X, cat_features=self.model.get_cat_feature_indices())
         
-        full_shap_values = (
-            self.model
-            .get_feature_importance(data_pool, prettified=True, type='ShapValues')
-            .rename(columns={i:col for i,col in enumerate(list(self.X.columns) + ['shap_expected_values'])})
-            .set_index(self.X.index)
-                           )
+        values = self.model.get_feature_importance(data_pool, type='ShapValues')
+        columns = list(self.X.columns) + ['shap_expected_values']
+        index = self.X.index
 
-        
+        if len(values.shape) == 3:
+            if class_label is not None:
+                values = values[:, self.model.classes_.index(class_label),:]
+            else:
+                values = values[:,0,:]
+
+        full_shap_values = pd.DataFrame(values, columns=columns, index=index)
+
         self.shap_values = full_shap_values.iloc[:,:-1]
         self.shap_expected_values = full_shap_values.iloc[:,-1]
-        
-        self.set_shap_values_units()
-        
+
         return self
-        
-    def explain_shap(self, record_index=None, **kwargs):
+
+    def explain_shap(self, record_index=None, kind='classification', **kwargs):
         '''Displays the Shap ForcePlot for a given index. 
         If no record index is provided, one is chosen at random.
         
@@ -368,6 +390,10 @@ class ShapExplainer(Experiment):
         record_index: 
             Index of the underlying self.X table.
 
+        kind: str (default 'classification')
+            Determines wether to plot the shap values using 'logit' (e.g. for expressing probability)
+            or 'identity' for regression problems.
+
         Note:
         -----
         If no self.shape_values is None, this function will call self.set_shao_values()
@@ -375,12 +401,22 @@ class ShapExplainer(Experiment):
         
         if self.shap_values is None:
             self.set_shap_values()
-                     
+
+        if record_index is None:
+            record_index = self.X_test.sample(1).index[0]
+        
+        if kind=='classification':
+            link = 'logit'
+        elif kind=='regression':
+            link = 'identity'
+        else:
+            raise ValueError(f'kind must be in ["classification","regression"], not {kind}')
+
         sample_shap_values = self.shap_values.loc[record_index,:].values
         expected_value = self.shap_expected_values.loc[record_index]
         features = self.X.loc[record_index,:]
 
-        display(shap.force_plot(expected_value, sample_shap_values, features, **kwargs))
+        display(shap.force_plot(expected_value, sample_shap_values, features, link=link, **kwargs))
         return self
 
 class ExtendedCatBoost(Experiment):
