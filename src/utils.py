@@ -464,7 +464,7 @@ def make_non_negative(x):
     return max(x, 0)
 
 def prettify_dataframe(df, styling_name='dark_header'):
-    '''Displays a given dataframe in 
+    '''Displays a given dataframe with some nice css'''
     if styling_name == 'dark_header':
         df = df.style.set_table_styles([
             {'selector': 'tr:nth-of-type(odd)','props': [('background', '#eee')]}, 

@@ -35,7 +35,6 @@ catboost_config = dict(n_estimators=1000,
                    use_best_model=True,
                    )
 
-
 def get_cat_feature_indices(X):
     '''Returns the index for each object column in a pandas dataframe'''
     return [i for i, is_object in enumerate(X.dtypes == 'object') if is_object]
@@ -214,16 +213,24 @@ class Experiment:
         self.model.fit(self.X_train, self.y_train)
         return self
     
-    def predict(self):
-        '''Executes pd.Series(self.model.predict(self.X_test).ravel(), index=self.X_test.index) and saves this to y_pred'''
-        y_pred = self.model.predict(self.X_test)
-        self.y_pred = pd.Series(y_pred.ravel(), index=self.X_test.index)
+    def predict(self, X=None):
+        '''Executes pd.Series(self.model.predict(X).ravel(), index=X.index) and saves this to y_pred
+        
+        If X is none, then X is self.X_test.
+        '''
+        
+        if X is None:
+            X = self.X_test
+
+        y_pred = self.model.predict(X)
+        self.y_pred = pd.Series(y_pred.ravel(), index=X.index)
         return self.y_pred
     
     def predict_proba(self):
+        '''Provides the model confidence for each possible label.'''
         y_pred_proba = self.model.predict_proba(self.X_test)
         self.y_pred_proba = pd.DataFrame(y_pred_proba, index=self.X_test.index, columns=self.model.classes_)
-        return self.y_pred
+        return self.y_pred_proba
     
     def get_params(self):
         return self.model.get_params()
