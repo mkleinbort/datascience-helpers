@@ -24,9 +24,9 @@ from src.utils import get_logger, PickleManager, get_time_now
 #from src.image_utils import display_dataframe
 
 catboost_config = dict(n_estimators=1000,
-                   allow_writing_files=True,
-                   save_snapshot=True,
-                   snapshot_file='experiment.snapshot',
+                   #allow_writing_files=True,
+                   #save_snapshot=True,
+                   #snapshot_file='experiment.snapshot',
                    snapshot_interval=200,
                    train_dir='logs',
                    metric_period=100,
@@ -37,7 +37,7 @@ catboost_config = dict(n_estimators=1000,
 
 def get_cat_feature_indices(X):
     '''Returns the index for each object column in a pandas dataframe'''
-    return [i for i, is_object in enumerate(X.dtypes == 'object') if is_object]
+    return [i for i, dtype in enumerate(X.dtypes) if dtype=='object' or dtype=='bool']
 
 class GroupByModel(BaseEstimator):
     '''This "model" uses a list of explicitly stated columns from the training data
@@ -205,11 +205,16 @@ class Experiment:
         self._validate_init()
         
     def run(self, *fit_args, **fit_kwargs):
+        '''Runs self.model.fit(self.X_train, self.y_train, *fit_args, **fit_kwargs)
+        then self.y_pred = self.predict(self.X_test)
+        returns self
+        '''
         self.model.fit(self.X_train, self.y_train, *fit_args, **fit_kwargs)
         self.y_pred = self.predict(self.X_test)
         return self
     
     def fit(self):
+        '''Runs self.model.fit(self.X_train, self.y_train)'''
         self.model.fit(self.X_train, self.y_train)
         return self
     
@@ -236,13 +241,14 @@ class Experiment:
         return self.model.get_params()
     
     def _build_full_and_bookeeping_data(self):
+        if isinstance(self.bookkeeping_data, list):
+            self.bookkeeping_data = self.data.loc[:, self.bookkeeping_data]
         if self.bookkeeping_data is None:
             self.bookkeeping_data = self.data
         if self.data is None:
             self.data = self.bookkeeping_data
 
     def _build_train_test_eval_sets(self):
-        
         if self.test_set is None:
             self.test_set = ~self.train_set
             
@@ -265,7 +271,6 @@ class Experiment:
             self.y_eval = self.y.loc[self.eval_set]
             
     def _validate_init(self):
-        
         assert isinstance(self.data, pd.DataFrame)
         assert isinstance(self.bookkeeping_data, pd.DataFrame)
         assert isinstance(self.X, pd.DataFrame)
@@ -322,12 +327,11 @@ class Experiment:
         author: str (default '')
             Used to sign the note when provided
         ''' 
-        note = f'''Time: {get_time_now()}\nBy: {author}{'-'*20}\n{text}\n\n'''
-
+        
         if mode=='append':
-            self.notes += note
+            self.notes += text
         elif mode=='overwrite':
-            self.notes = note
+            self.notes = text
         else:
             raise ValueError(f'mode must be one of ["append", "overwrite"], not {mode}.')
             
@@ -381,7 +385,7 @@ class ShapExplainer(Experiment):
 
         return self
 
-    def explain_shap(self, record_index=None, kind='classification', **kwargs):
+    def explain_shap(self, record_index=None, kind='infer', **kwargs):
         '''Displays the Shap ForcePlot for a given index. 
         If no record index is provided, one is chosen at random.
         
@@ -390,9 +394,10 @@ class ShapExplainer(Experiment):
         record_index: 
             Index of the underlying self.X table.
 
-        kind: str (default 'classification')
+        kind: str (default 'infer')
             Determines wether to plot the shap values using 'logit' (e.g. for expressing probability)
-            or 'identity' for regression problems.
+            or 'identity' for regression problems. If kind=='infer' then the type of model is used to determine
+            the regression vs classification (e.g. CatBoostRegressor vs CatBoostClassifier)
 
         Note:
         -----
@@ -404,6 +409,14 @@ class ShapExplainer(Experiment):
 
         if record_index is None:
             record_index = self.X_test.sample(1).index[0]
+        
+        if kind='infer':
+            if isinstance(self.model, CatBoostRegressor):
+                kind='regression'
+            elif isinstance(self.model, CatBoostClassifier):
+                kind='classification'
+            else: 
+                raise ValueError('Could not infer model type, please state if this is a regression or classification problem.')
         
         if kind=='classification':
             link = 'logit'
@@ -419,8 +432,8 @@ class ShapExplainer(Experiment):
         display(shap.force_plot(expected_value, sample_shap_values, features, link=link, **kwargs))
         return self
 
-class ExtendedCatBoost(Experiment):
-    ''' '''
+class ExperimentPlus(Experiment, ShapExplainer):
+    '''Combines the fatures of Experiment and ShapExplainer + some additional features'''
 
     def build_model_affinity_table(self, verbose=0, logger=get_logger(), n_jobs=16):
         '''Uses the build_model_affinity_table() function to build a model-driven
